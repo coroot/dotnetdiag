@@ -58,8 +58,8 @@ type CollectTracingConfig struct {
 // NewClient creates a new Diagnostic IPC Protocol client for the transport
 // specified - on Unix/Linux based platforms, a Unix Domain Socket will be used, and
 // on Windows, a Named Pipe will be used:
-//  - /tmp/dotnet-diagnostic-{%d:PID}-{%llu:disambiguation key}-socket (Linux/MacOS)
-//  - \\.\pipe\dotnet-diagnostic-{%d:PID} (Windows)
+//   - /tmp/dotnet-diagnostic-{%d:PID}-{%llu:disambiguation key}-socket (Linux/MacOS)
+//   - \\.\pipe\dotnet-diagnostic-{%d:PID} (Windows)
 //
 // Refer to documentation for details:
 // https://github.com/dotnet/diagnostics/blob/main/documentation/design-docs/ipc-protocol.md#transport
@@ -142,5 +142,6 @@ func (s *Session) Read(b []byte) (int, error) {
 }
 
 func (s *Session) Close() error {
+	defer s.conn.Close()
 	return s.c.StopTracing(s.ID)
 }
