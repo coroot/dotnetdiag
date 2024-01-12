@@ -1,7 +1,9 @@
 package dotnetdiag
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 )
 
@@ -100,7 +102,10 @@ func (c *Client) CollectTracing(config CollectTracingConfig) (s *Session, err er
 		return nil, err
 	}
 	var resp CollectTracingResponse
-	if err = readResponse(conn, &resp); err != nil {
+	if err = readResponseHeader(conn); err != nil {
+		return nil, err
+	}
+	if err = binary.Read(conn, binary.LittleEndian, &resp); err != nil {
 		return nil, err
 	}
 
@@ -124,11 +129,14 @@ func (c *Client) StopTracing(sessionID uint64) error {
 	}()
 
 	p := StopTracingPayload{SessionID: sessionID}
-	if err := writeMessage(conn, CommandSetEventPipe, EventPipeStopTracing, p.Bytes()); err != nil {
+	if err = writeMessage(conn, CommandSetEventPipe, EventPipeStopTracing, p.Bytes()); err != nil {
 		return err
 	}
 	var resp StopTracingResponse
-	if err := readResponse(conn, &resp); err != nil {
+	if err = readResponseHeader(conn); err != nil {
+		return err
+	}
+	if err = binary.Read(conn, binary.LittleEndian, &resp); err != nil {
 		return err
 	}
 	if resp.SessionID != sessionID {
@@ -137,11 +145,56 @@ func (c *Client) StopTracing(sessionID uint64) error {
 	return nil
 }
 
+// ProcessInfo queries the runtime for some basic information about the process.
+// This method uses the ProcessInfo2 command with is available since .NET 7.0
+func (c *Client) ProcessInfo() (*ProcessInfo2Response, error) {
+	conn, err := c.dial(c.addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+	if err = writeMessage(conn, CommandSetProcess, ProcessInfo2, []byte{}); err != nil {
+		return nil, err
+	}
+
+	if err = readResponseHeader(conn); err != nil {
+		return nil, err
+	}
+
+	resp := &ProcessInfo2Response{}
+	if err = binary.Read(conn, binary.LittleEndian, &resp.ProcessId); err != nil {
+		return nil, err
+	}
+	if _, err = io.ReadFull(conn, resp.RuntimeCookie[:]); err != nil {
+		return nil, err
+	}
+	if resp.CommandLine, err = readUtf16String(conn); err != nil {
+		return nil, err
+	}
+	if resp.OS, err = readUtf16String(conn); err != nil {
+		return nil, err
+	}
+	if resp.Arch, err = readUtf16String(conn); err != nil {
+		return nil, err
+	}
+	if resp.ManagedEntrypointAssemblyName, err = readUtf16String(conn); err != nil {
+		return nil, err
+	}
+	if resp.ClrProductVersion, err = readUtf16String(conn); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 func (s *Session) Read(b []byte) (int, error) {
 	return s.conn.Read(b)
 }
 
 func (s *Session) Close() error {
-	defer s.conn.Close()
+	defer func() {
+		_ = s.conn.Close()
+	}()
 	return s.c.StopTracing(s.ID)
 }

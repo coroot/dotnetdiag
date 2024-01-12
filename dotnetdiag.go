@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"unicode/utf16"
 
 	"golang.org/x/text/encoding/unicode"
 )
@@ -44,6 +46,8 @@ const (
 	EventPipeStopTracing
 	EventPipeCollectTracing
 	EventPipeCollectTracing2
+
+	ProcessInfo2 = 4
 )
 
 type CollectTracingPayload struct {
@@ -82,6 +86,16 @@ type StopTracingResponse struct {
 	SessionID uint64
 }
 
+type ProcessInfo2Response struct {
+	ProcessId                     uint64
+	CommandLine                   string
+	OS                            string
+	Arch                          string
+	RuntimeCookie                 [16]byte
+	ManagedEntrypointAssemblyName string
+	ClrProductVersion             string
+}
+
 func writeMessage(w io.Writer, commandSet, commandID uint8, payload []byte) error {
 	bw := bufio.NewWriter(w)
 	err := binary.Write(bw, binary.LittleEndian, Header{
@@ -100,7 +114,7 @@ func writeMessage(w io.Writer, commandSet, commandID uint8, payload []byte) erro
 	return bw.Flush()
 }
 
-func readResponse(r io.Reader, v interface{}) error {
+func readResponseHeader(r io.Reader) error {
 	var h Header
 	if err := binary.Read(r, binary.LittleEndian, &h); err != nil {
 		return err
@@ -109,7 +123,7 @@ func readResponse(r io.Reader, v interface{}) error {
 		return ErrHeaderMalformed
 	}
 	if !(h.CommandSet == CommandSetServer && h.CommandID == 0xFF) {
-		return binary.Read(r, binary.LittleEndian, v)
+		return nil
 	}
 	// TODO: improve error handling.
 	var er ErrorResponse
@@ -153,4 +167,19 @@ func mustStringBytes(s string) []byte {
 	}
 	_ = binary.Write(b, binary.LittleEndian, uint16(0))
 	return b.Bytes()
+}
+
+func readUtf16String(r io.Reader) (string, error) {
+	var l uint32
+	if err := binary.Read(r, binary.LittleEndian, &l); err != nil {
+		return "", err
+	}
+	if l == 0 {
+		return "", errors.New("invalid string length")
+	}
+	data := make([]uint16, l)
+	if err := binary.Read(r, binary.LittleEndian, &data); err != nil {
+		return "", err
+	}
+	return string(utf16.Decode(data[:len(data)-1])), nil
 }
